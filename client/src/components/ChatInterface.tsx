@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 // import { Send, ShoppingCart, ExternalLink, Star } from 'lucide-react';
-import { Send } from 'lucide-react';
+import { Send, X, ExternalLink, Star } from 'lucide-react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 
@@ -15,7 +15,7 @@ interface Product {
   title: string;
   price: string;
   originalPrice?: string;
-//   image: string;
+  image?: string;
   link: string;
   rating?: number;
   reviews?: number;
@@ -40,6 +40,7 @@ const ChatInterface = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -62,6 +63,9 @@ const ChatInterface = () => {
   const sendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
 
+    // Clear selected product when starting new search
+    setSelectedProduct(null);
+
     const userMessage: Message = {
       role: 'user',
       content: inputMessage,
@@ -75,7 +79,18 @@ const ChatInterface = () => {
     try {
       const response = await axios.post<ChatResponse>('http://localhost:5000/chat', {
         message: inputMessage,
-        conversationId
+        conversationId,
+        selectedProduct: selectedProduct ? {
+          id: selectedProduct.id,
+          title: selectedProduct.title,
+          price: selectedProduct.price,
+          originalPrice: selectedProduct.originalPrice,
+          image: selectedProduct.image,
+          link: selectedProduct.link,
+          rating: selectedProduct.rating,
+          reviews: selectedProduct.reviews,
+          features: selectedProduct.features
+        } : null
       });
 
       const assistantMessage: Message = {
@@ -86,8 +101,6 @@ const ChatInterface = () => {
 
       setMessages(prev => [...prev, assistantMessage]);
       setConversationId(response.data.conversationId);
-      
-      // Set products but don't store them separately - they'll be shown in the message
       setProducts(response.data.products);
 
     } catch (error) {
@@ -109,6 +122,141 @@ const ChatInterface = () => {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  // Function to parse product from markdown link and set as selected
+  const handleProductClick = (url: string, text: string) => {
+    // Extract product info from the markdown text and current products
+    const product = products.find(p => p.link === url);
+    if (product) {
+      setSelectedProduct(product);
+    } else {
+      // If not found in current products, parse from the markdown text
+      // Expected format: "ProductName - $price ⭐ rating/5 (reviews)"
+      const priceMatch = text.match(/\$[\d,]+\.?\d*/);
+      const ratingMatch = text.match(/(\d\.\d)\/5/);
+      const reviewsMatch = text.match(/\((\d{1,3}(?:,\d{3})*)\s*reviews?\)/);
+      
+      // Clean up title by removing price and rating info
+      let cleanTitle = text
+        .replace(/\$[\d,]+\.?\d*.*$/, '') // Remove everything after price
+        .replace(/⭐.*$/, '') // Remove everything after stars
+        .replace(/^\d+\.\s*/, '') // Remove numbering like "1. "
+        .replace(/\s*-\s*$/, '') // Remove trailing dash
+        .trim();
+
+      const basicProduct: Product = {
+        id: `selected_${Date.now()}`,
+        title: cleanTitle || text.substring(0, 50) + '...',
+        price: priceMatch ? priceMatch[0] : '$0.00',
+        link: url,
+        rating: ratingMatch ? parseFloat(ratingMatch[1]) : undefined,
+        reviews: reviewsMatch ? parseInt(reviewsMatch[1].replace(/,/g, '')) : undefined,
+        features: []
+      };
+      setSelectedProduct(basicProduct);
+    }
+  };
+
+  // Custom markdown components to handle product link clicks
+  const markdownComponents = {
+    a: ({ href, children, ...props }: any) => {
+      const isAmazonLink = href && href.includes('amazon.com');
+      
+      if (isAmazonLink) {
+        return (
+          <span 
+            onClick={(e) => {
+              e.preventDefault();
+              handleProductClick(href, children?.toString() || '');
+            }}
+            className="text-blue-600 hover:text-blue-800 cursor-pointer underline font-medium transition-colors"
+            {...props}
+          >
+            {children}
+          </span>
+        );
+      }
+      
+      return (
+        <a 
+          href={href} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:text-blue-800 underline"
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    }
+  };
+
+  // Selected Product Preview Component
+  const SelectedProductPreview = () => {
+    if (!selectedProduct) return null;
+
+    return (
+      <div className="border-t border-gray-200/50 bg-gradient-to-r from-blue-50 to-indigo-50 p-3 animate-slideDown">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+            
+            {/* Product Image */}
+            {selectedProduct.image && (
+              <img 
+                src={selectedProduct.image} 
+                alt={selectedProduct.title}
+                className="w-12 h-12 object-cover rounded-lg border border-gray-200 flex-shrink-0"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+            )}
+            
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-blue-600 font-medium mb-1">Selected Product:</p>
+              <h4 className="text-sm font-semibold text-gray-900 truncate" title={selectedProduct.title}>
+                {selectedProduct.title}
+              </h4>
+              <div className="flex items-center gap-3 mt-1">
+                <span className="text-sm font-bold text-green-600">{selectedProduct.price}</span>
+                {selectedProduct.originalPrice && (
+                  <span className="text-xs text-gray-500 line-through">{selectedProduct.originalPrice}</span>
+                )}
+                {selectedProduct.rating && (
+                  <div className="flex items-center gap-1">
+                    <Star className="w-3 h-3 text-yellow-400 fill-current" />
+                    <span className="text-xs text-gray-600">{selectedProduct.rating}</span>
+                    {selectedProduct.reviews && (
+                      <span className="text-xs text-gray-500">({selectedProduct.reviews.toLocaleString()})</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2">
+            <a
+              href={selectedProduct.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1  text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+            >
+              <ExternalLink className="w-3 h-3" />
+              View on Amazon
+            </a>
+                <button
+                  onClick={() => setSelectedProduct(null)}
+                  className="p-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                  title="Clear selection"
+                >
+                  <X className="w-4 h-4 text-white" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
 //   const ProductCard = ({ product }: { product: Product }) => (
@@ -220,7 +368,10 @@ const ChatInterface = () => {
                       : 'bg-white text-gray-800 border border-gray-200/50 shadow-gray-100'
                   }`}
                 >
-                  <ReactMarkdown className="text-sm leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-strong:text-current prose-code:text-current prose-ul:my-2 prose-li:my-0">
+                  <ReactMarkdown 
+                    className="text-sm leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-strong:text-current prose-code:text-current prose-ul:my-2 prose-li:my-0"
+                    components={markdownComponents}
+                  >
                     {message.content}
                   </ReactMarkdown>
                   <div className={`text-xs mt-2 ${
@@ -283,6 +434,9 @@ const ChatInterface = () => {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Selected Product Preview - appears above input */}
+      <SelectedProductPreview />
+
       {/* Input Area */}
       <div className="border-t border-gray-200/50 bg-white p-4 flex-shrink-0">
         <div className="flex gap-3 items-end">
@@ -292,7 +446,7 @@ const ChatInterface = () => {
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Ask me to find any product... "
+              placeholder={selectedProduct ? `Ask about "${selectedProduct.title.substring(0, 30)}..." or search for new products` : "Ask me to find any product... "}
               className="w-full resize-none border border-gray-300 rounded-xl px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 placeholder-gray-500 text-sm text-gray-900"
               rows={1}
               disabled={isLoading}
@@ -326,6 +480,11 @@ const ChatInterface = () => {
               AI Powered
             </span>
             <span className="hidden sm:inline">Press Enter to send</span>
+            {!selectedProduct && (
+              <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded hidden md:inline">
+                💡 Click any product link to select it
+              </span>
+            )}
           </div>
           
           <div className="text-xs text-gray-400">

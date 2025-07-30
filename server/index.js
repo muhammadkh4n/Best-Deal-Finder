@@ -52,7 +52,7 @@ const conversations = new Map();
 // Main chat endpoint
 app.post('/chat', async (req, res) => {
   try {
-    const { message, conversationId = generateConversationId() } = req.body;
+    const { message, conversationId = generateConversationId(), selectedProduct } = req.body;
     
     console.log('💬 Received message:', message);
     console.log('🆔 Conversation ID:', conversationId);
@@ -80,7 +80,7 @@ app.post('/chat', async (req, res) => {
     
     // Process the message
     console.log('⚙️ Processing user message...');
-    const response = await processUserMessage(message.trim(), conversation);
+    const response = await processUserMessage(message.trim(), conversation, selectedProduct);
     
     // Add assistant response to conversation
     const assistantMessage = {
@@ -124,7 +124,7 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-async function processUserMessage(message, conversation) {
+async function processUserMessage(message, conversation, selectedProduct) {
   try {
     // Step 1: Use Gemini to parse the user's intent and extract product specs
     const productSpecs = await parseWithGemini(message, conversation);
@@ -137,7 +137,7 @@ async function processUserMessage(message, conversation) {
       return formatProductResponse(products, productSpecs);
     } else {
       // Step 3: Handle follow-up questions about existing products
-      return await handleFollowUpQuestion(message, conversation);
+      return await handleFollowUpQuestion(message, conversation, selectedProduct);
     }
   } catch (error) {
     console.error('Error processing message:', error);
@@ -377,7 +377,7 @@ function formatProductResponse(products, specs) {
       response += `🔹 ${product.features.slice(0, 3).join(' • ')}\n`;
     }
     
-    response += `� [**View on Amazon**](${product.link})\n\n`;
+    response += `� [**More Details**](${product.link})\n\n`;
   });
   
   response += "💡 *Click any link to view the product on Amazon, or ask me questions like 'Tell me more about option 2' or 'Which one is best for gaming?'*";
@@ -385,29 +385,29 @@ function formatProductResponse(products, specs) {
   return response;
 }
 
-async function handleFollowUpQuestion(message, conversation) {
+async function handleFollowUpQuestion(message, conversation, selectedProduct) {
   const apiKey = process.env.GEMINI_API_KEY;
   
   if (!apiKey) {
     return 'Sorry, I need the Gemini API key configured to answer follow-up questions.';
   }
   
+  let productContext = '';
+  if (selectedProduct) {
+    productContext = `\n\nIMPORTANT: ONLY provide information about this product. Do NOT list other products or compare unless explicitly asked.\nSelected Product:\n${JSON.stringify(selectedProduct, null, 2)}`;
+  }
   const prompt = `
-    The user is asking a follow-up question about products I previously recommended.
+    The user is asking a follow-up question about a product I previously recommended.
     
     User question: "${message}"
     
-    Available products: ${JSON.stringify(conversation.products)}
+    ${productContext}
     
-    Provide a helpful, detailed response about the specific product they're asking about, 
-    including relevant specifications, comparisons, and recommendations. Be conversational and helpful.
+    Provide a helpful, detailed response about the selected product, including relevant specifications, features, pros/cons, and recommendations. Be conversational and helpful.
     
-    If they're asking about a specific product number (like "1st option" or "second one"), 
-    refer to the products by their position in the array.
+    Do NOT list other products or compare unless the user asks for a comparison.
     
-    If they're asking for comparisons, provide a clear comparison highlighting pros and cons.
-    
-    Keep the response informative but concise.
+    Keep the response informative, focused, and concise.
   `;
   
   try {
@@ -421,8 +421,21 @@ async function handleFollowUpQuestion(message, conversation) {
         }]
       }
     );
-    
-    return response.data.candidates[0].content.parts[0].text;
+    let text = response.data.candidates[0].content.parts[0].text;
+    // If Gemini returns a product list, extract only info about selectedProduct
+    if (selectedProduct) {
+      // Try to find the selected product's title in the response and extract that section
+      const title = selectedProduct.title;
+      const regex = new RegExp(`(\*\*.*${title}.*\*\*[^\n]*[\s\S]*?)(?=\*\*|$)`, 'i');
+      const match = text.match(regex);
+      if (match && match[1]) {
+        text = match[1].trim();
+      } else {
+        // If not found, fallback to a simple summary
+        text = `**${selectedProduct.title}**\n💰 **${selectedProduct.price}**\n${selectedProduct.features ? '🔹 ' + selectedProduct.features.join(' • ') + '\n' : ''}${selectedProduct.rating ? '⭐ ' + selectedProduct.rating + '/5\n' : ''}${selectedProduct.reviews ? '(' + selectedProduct.reviews.toLocaleString() + ' reviews)\n' : ''}[More Details](${selectedProduct.link})`;
+      }
+    }
+    return text;
   } catch (error) {
     console.error('Gemini follow-up error:', error);
     return 'Sorry, I encountered an error while processing your follow-up question. Please try rephrasing or ask about specific products.';
