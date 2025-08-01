@@ -69,6 +69,12 @@ app.post('/chat', async (req, res) => {
       messages: [],
       products: []
     };
+    // Store selectedProduct in conversation for follow-up
+    if (selectedProduct) {
+      conversation.selectedProduct = selectedProduct;
+    } else {
+      delete conversation.selectedProduct;
+    }
     
     // Add user message to conversation
     const userMessage = {
@@ -80,6 +86,7 @@ app.post('/chat', async (req, res) => {
     
     // Process the message
     console.log('⚙️ Processing user message...');
+    // Pass selectedProduct explicitly to processUserMessage
     const response = await processUserMessage(message.trim(), conversation, selectedProduct);
     
     // Add assistant response to conversation
@@ -109,6 +116,7 @@ app.post('/chat', async (req, res) => {
     
     console.log('✅ Response ready, sending to client');
     
+    // Always return existing products to keep them visible in UI
     res.json({
       response,
       conversationId,
@@ -124,20 +132,23 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-async function processUserMessage(message, conversation, selectedProduct) {
+async function processUserMessage(message, conversation, selectedProduct = null) {
   try {
-    // Step 1: Use Gemini to parse the user's intent and extract product specs
     const productSpecs = await parseWithGemini(message, conversation);
-    
+
+    // If a selectedProduct is present (from request), always treat as follow-up
+    if (selectedProduct) {
+      return await handleFollowUpQuestion(message, conversation, selectedProduct);
+    }
+
     // Step 2: If it's a product search, scrape Amazon
     if (productSpecs.isProductSearch) {
       const products = await searchAmazonProducts(productSpecs);
       conversation.products = products;
-      
       return formatProductResponse(products, productSpecs);
     } else {
       // Step 3: Handle follow-up questions about existing products
-      return await handleFollowUpQuestion(message, conversation, selectedProduct);
+      return await handleFollowUpQuestion(message, conversation);
     }
   } catch (error) {
     console.error('Error processing message:', error);
@@ -354,63 +365,36 @@ function formatProductResponse(products, specs) {
     return `I couldn't find any ${specs.category || 'products'} matching your criteria right now. This might be due to Amazon's anti-bot measures. Try:\n\n• Adjusting your search terms\n• Being more specific about features\n• Trying a different price range\n\nOr ask me about a different type of product!`;
   }
   
-  let response = `🎉 Great! I found **${products.length} excellent ${specs.category || 'product'}${products.length > 1 ? 's' : ''}** for you:\n\n`;
-  
-  products.forEach((product, index) => {
-    response += `**${index + 1}. ${product.title}**\n`;
-    response += `💰 **${product.price}**`;
-    if (product.originalPrice) {
-      response += ` ~~${product.originalPrice}~~ *(On Sale!)*`;
-    }
-    response += '\n';
-    
-    if (product.rating) {
-      const stars = '⭐'.repeat(Math.floor(product.rating));
-      response += `${stars} ${product.rating}/5`;
-      if (product.reviews) {
-        response += ` (${product.reviews.toLocaleString()} reviews)`;
-      }
-      response += '\n';
-    }
-    
-    if (product.features && product.features.length > 0) {
-      response += `🔹 ${product.features.slice(0, 3).join(' • ')}\n`;
-    }
-    
-    response += `� [**More Details**](${product.link})\n\n`;
-  });
-  
-  response += "💡 *Click any link to view the product on Amazon, or ask me questions like 'Tell me more about option 2' or 'Which one is best for gaming?'*";
-  
-  return response;
+  // Return a simple message - the product cards will be displayed separately in the UI
+  return `🎉 Great! I found **${products.length} excellent ${specs.category || 'product'}${products.length > 1 ? 's' : ''}** for you! You can click on any product card to select it and ask follow-up questions.`;
 }
 
-async function handleFollowUpQuestion(message, conversation, selectedProduct) {
+async function handleFollowUpQuestion(message, conversation, selectedProduct = null) {
   const apiKey = process.env.GEMINI_API_KEY;
   
   if (!apiKey) {
     return 'Sorry, I need the Gemini API key configured to answer follow-up questions.';
   }
   
-  let productContext = '';
+  let prompt;
   if (selectedProduct) {
-    productContext = `\n\nIMPORTANT: ONLY provide information about this product. Do NOT list other products or compare unless explicitly asked.\nSelected Product:\n${JSON.stringify(selectedProduct, null, 2)}`;
+    prompt = `You are an expert shopping assistant. The user selected this product: ${JSON.stringify(selectedProduct)}.
+
+User follow-up question: "${message}"
+
+Answer ONLY about the selected product. Be clear, concise, and helpful. Focus on answering their specific question about this product.`;
+  } else {
+    prompt = `You are an expert shopping assistant. Here are the products previously recommended: ${JSON.stringify(conversation.products)}.
+
+User follow-up question: "${message}"
+
+Answer about the relevant product(s). Be clear, concise, and helpful.`;
   }
-  const prompt = `
-    The user is asking a follow-up question about a product I previously recommended.
-    
-    User question: "${message}"
-    
-    ${productContext}
-    
-    Provide a helpful, detailed response about the selected product, including relevant specifications, features, pros/cons, and recommendations. Be conversational and helpful.
-    
-    Do NOT list other products or compare unless the user asks for a comparison.
-    
-    Keep the response informative, focused, and concise.
-  `;
   
   try {
+    console.log('🤖 Making follow-up query to Gemini...');
+    console.log('📝 Prompt preview:', prompt.substring(0, 200) + '...');
+    
     const response = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
       {
@@ -419,26 +403,34 @@ async function handleFollowUpQuestion(message, conversation, selectedProduct) {
             text: prompt
           }]
         }]
+      },
+      {
+        timeout: 30000, // 30 seconds timeout
+        headers: {
+          'Content-Type': 'application/json'
+        }
       }
     );
-    let text = response.data.candidates[0].content.parts[0].text;
-    // If Gemini returns a product list, extract only info about selectedProduct
-    if (selectedProduct) {
-      // Try to find the selected product's title in the response and extract that section
-      const title = selectedProduct.title;
-      const regex = new RegExp(`(\*\*.*${title}.*\*\*[^\n]*[\s\S]*?)(?=\*\*|$)`, 'i');
-      const match = text.match(regex);
-      if (match && match[1]) {
-        text = match[1].trim();
-      } else {
-        // If not found, fallback to a simple summary
-        text = `**${selectedProduct.title}**\n💰 **${selectedProduct.price}**\n${selectedProduct.features ? '🔹 ' + selectedProduct.features.join(' • ') + '\n' : ''}${selectedProduct.rating ? '⭐ ' + selectedProduct.rating + '/5\n' : ''}${selectedProduct.reviews ? '(' + selectedProduct.reviews.toLocaleString() + ' reviews)\n' : ''}[More Details](${selectedProduct.link})`;
-      }
-    }
-    return text;
+    
+    console.log('✅ Gemini follow-up response received');
+    
+    // Return only Gemini's answer, trimmed
+    const result = response.data.candidates[0].content.parts[0].text || '';
+    return result.trim();
   } catch (error) {
-    console.error('Gemini follow-up error:', error);
-    return 'Sorry, I encountered an error while processing your follow-up question. Please try rephrasing or ask about specific products.';
+    console.error('❌ Gemini follow-up error details:', {
+      message: error.message,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data
+    });
+    
+    // Provide a more helpful fallback response
+    if (selectedProduct) {
+      return `I'm having trouble connecting to my AI service right now. However, I can tell you that you've selected the ${selectedProduct.title} priced at ${selectedProduct.price}. Please try asking your question again, or I can help you with other product searches.`;
+    } else {
+      return 'Sorry, I encountered an error while processing your follow-up question. Please try rephrasing or ask about specific products.';
+    }
   }
 }
 
