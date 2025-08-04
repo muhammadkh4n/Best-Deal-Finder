@@ -94,7 +94,7 @@
   role: 'assistant',
   content: response.data.response,
   timestamp: new Date(),
-   products: selectedProduct ? undefined : response.data.products
+  products: response.data.products // ✅ Attach products here
 };
 
 setMessages(prev => [...prev, assistantMessage]);

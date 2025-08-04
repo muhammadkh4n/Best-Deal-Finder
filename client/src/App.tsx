@@ -7,14 +7,12 @@ function App() {
       <div className="container mx-auto px-4 py-6 h-screen flex flex-col">
         <header className="text-center mb-6 animate-fadeIn flex-shrink-0">
           <div className="inline-flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-              <span className="text-xl">🛍️</span>
-            </div>
+          
             <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+              <h1 className="text-2xl  font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
                 Best Deal Finder
               </h1>
-              <p className="text-xs text-gray-600 font-medium">
+              <p className="text-xs pt-2 text-gray-600 font-medium">
                 AI-Powered Shopping Assistant
               </p>
             </div>

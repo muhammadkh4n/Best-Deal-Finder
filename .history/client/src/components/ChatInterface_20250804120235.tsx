@@ -8,7 +8,6 @@
     role: 'user' | 'assistant';
     content: string;
     timestamp: Date;
-      products?: Product[]; 
   }
 
   interface Product {
@@ -90,16 +89,15 @@
           } : null
         });
 
-       const assistantMessage: Message = {
-  role: 'assistant',
-  content: response.data.response,
-  timestamp: new Date(),
-   products: selectedProduct ? undefined : response.data.products
-};
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: response.data.response,
+          timestamp: new Date()
+        };
 
-setMessages(prev => [...prev, assistantMessage]);
-setConversationId(response.data.conversationId);
-
+        setMessages(prev => [...prev, assistantMessage]);
+        setConversationId(response.data.conversationId);
+        setProducts(response.data.products);
 
       } catch (error) {
         console.error('Error sending message:', error);
@@ -159,89 +157,49 @@ setConversationId(response.data.conversationId);
 
         {/* Chat Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/30 custom-scrollbar min-h-0">
-      {messages.map((message, index) => (
-  <div key={index}>
-    {/* Chat bubble */}
-    <div
-      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} message-bubble`}
-    >
-      <div className="flex items-start gap-3 max-w-[85%] lg:max-w-[75%]">
-        <div
-          className={`px-4 py-3 rounded-2xl shadow-sm hover-lift ${
-            message.role === 'user'
-              ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white ml-auto shadow-blue-200'
-              : 'bg-white text-gray-800 border border-gray-200/50 shadow-gray-100'
-          }`}
-        >
-          <ReactMarkdown className="text-sm leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-strong:text-current prose-code:text-current prose-ul:my-2 prose-li:my-0">
-            {message.content}
-          </ReactMarkdown>
-          <div
-            className={`text-xs mt-2 ${
-              message.role === 'user' ? 'text-blue-100' : 'text-gray-500'
-            }`}
-          >
-            {new Date(message.timestamp).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </div>
-        </div>
-
-        {message.role === 'user' && (
-          <div className="w-8 h-8 bg-gradient-to-r from-gray-400 to-gray-500 rounded-lg flex items-center justify-center flex-shrink-0 mt-1 shadow-sm">
-            <span className="text-white text-xs">👤</span>
-          </div>
-        )}
-        {message.role === 'assistant' && (
-          <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0 mt-1 shadow-sm">
-            <span className="text-white text-xs">🤖</span>
-          </div>
-        )}
-      </div>
-    </div>
-
-    {/* ✅ If assistant message has product cards */}
-    {message.role === 'assistant' && message.products && message.products.length > 0 && (
-      <div className="mt-4 ml-10 animate-slideIn">
-        <div className="grid gap-3 max-w-[85%] lg:max-w-[75%]">
-          {message.products.map((product) => (
-            <div
-              key={product.id}
-              className="group bg-white rounded-xl border border-gray-200/80 hover:border-blue-200 transition-all duration-300 hover:shadow-lg hover:shadow-blue-100/30 p-3 hover:-translate-y-1 cursor-pointer"
-              onClick={() => setSelectedProduct(product)}
-              title="Select this product for follow-up questions"
-            >
-              <div className="flex gap-3">
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-medium text-gray-900 text-sm mb-1 line-clamp-2 leading-5 group-hover:text-blue-700 transition-colors">
-                    {product.title}
-                  </h3>
-                  <div className="flex items-baseline gap-2 mb-2">
-                    <span className="text-lg font-bold text-gray-900">{product.price}</span>
-                    {product.originalPrice && (
-                      <span className="text-xs text-gray-500 line-through">{product.originalPrice}</span>
-                    )}
-                  </div>
-                  <a
-                    href={product.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md group-hover:scale-105 mt-1"
-                    onClick={(e) => e.stopPropagation()}
+          {messages.map((message, index) => (
+            <div key={index}>
+              <div
+                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} message-bubble`}
+              >
+                <div className="flex items-start gap-3 max-w-[85%] lg:max-w-[75%]">
+                  {/* Always show user messages and assistant messages */}
+                  <div
+                    className={`px-4 py-3 rounded-2xl shadow-sm hover-lift ${
+                      message.role === 'user'
+                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white ml-auto shadow-blue-200'
+                        : 'bg-white text-gray-800 border border-gray-200/50 shadow-gray-100'
+                    }`}
                   >
-                    View on Amazon
-                  </a>
+                    <ReactMarkdown className="text-sm leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-strong:text-current prose-code:text-current prose-ul:my-2 prose-li:my-0">
+                      {message.content}
+                    </ReactMarkdown>
+                    <div className={`text-xs mt-2 ${
+                      message.role === 'user' ? 'text-blue-100' : 'text-gray-500'
+                    }`}>
+                      {new Date(message.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                  
+                  {message.role === 'user' && (
+                    <div className="w-8 h-8 bg-gradient-to-r from-gray-400 to-gray-500 rounded-lg flex items-center justify-center flex-shrink-0 mt-1 shadow-sm">
+                      <span className="text-white text-xs">👤</span>
+                    </div>
+                  )}
+                  
+                  {message.role === 'assistant' && (
+                    <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0 mt-1 shadow-sm">
+                      <span className="text-white text-xs">🤖</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           ))}
-        </div>
-      </div>
-    )}
-  </div>
-))}
-
+          
           {/* Show products after all messages */}
           {products.length > 0 && (
             <div className="mt-4 animate-slideIn">
