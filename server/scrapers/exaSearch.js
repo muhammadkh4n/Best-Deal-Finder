@@ -6,60 +6,100 @@ class ExaSearch {
     this.baseUrl = 'https://api.exa.ai/search';
   }
 
-  async searchProducts(query, maxResults = 10) {
+  async searchProducts(query, maxResults = 10, marketplace = 'amazon') {
     if (!this.apiKey || this.apiKey === 'your_exa_api_key_here') {
-      console.log('⚠️ ExaSearch API key not configured, using Amazon fallback');
+      console.log('⚠️ ExaSearch API key not configured, using fallback');
+      if (marketplace === 'bestbuy') {
+        console.log('🛍️ BestBuy search requires ExaSearch API. Please configure EXA_API_KEY in environment.');
+        return [];
+      }
       return this.getAmazonFallbackProducts(query);
     }
 
     try {
-      console.log('🔍 Searching with ExaSearch for:', query);
+      console.log(`🔍 Searching with ExaSearch for: ${query} [${marketplace}]`);
+      const includeDomains = marketplace === 'bestbuy' ? ['bestbuy.com'] : ['amazon.com'];
+      const searchResults = await this.performMultipleSearches(query, maxResults, includeDomains);
       
-      // Try multiple search strategies for better results
-      const searchResults = await this.performMultipleSearches(query, maxResults);
+      if (marketplace === 'bestbuy') {
+        // For BestBuy, provide detailed feedback and do NOT use fallback
+        if (searchResults.length === 0) {
+          console.log('⚠️ No BestBuy products found. Try:');
+          console.log('  • More specific product terms (e.g., "gaming laptop" instead of "laptop")');
+          console.log('  • Different brand names (e.g., "Dell laptop", "Sony headphones")');
+          console.log('  • Product model numbers if known');
+          return [];
+        }
+        console.log(`✅ ExaSearch (BestBuy) found ${searchResults.length} products`);
+        return searchResults;
+      }
       
+      // For Amazon, allow fallback
       if (searchResults.length < 3) {
         console.log(`⚠️ Only found ${searchResults.length} products, enhancing with fallback`);
         return this.enhanceWithFallback(searchResults, query, maxResults);
       }
-      
       console.log(`✅ ExaSearch found ${searchResults.length} products`);
       return searchResults;
-
     } catch (error) {
       console.error('❌ ExaSearch error:', error.response?.data || error.message);
+      if (marketplace === 'bestbuy') {
+        console.log('❌ BestBuy search failed. This could be due to:');
+        console.log('  • ExaSearch API rate limits');
+        console.log('  • Network connectivity issues');
+        console.log('  • BestBuy website changes');
+        return [];
+      }
       console.log('🔄 Falling back to Amazon product database');
       return this.getAmazonFallbackProducts(query);
     }
   }
 
-  async performMultipleSearches(query, maxResults) {
+  async performMultipleSearches(query, maxResults, includeDomains = ['amazon.com']) {
     const allProducts = [];
-    const searchStrategies = [
-      // Strategy 1: Direct product search
-      `${query} amazon.com buy product price review`,
-      // Strategy 2: Brand + category search
-      `${query} amazon product deals shopping`,
-      // Strategy 3: Alternative phrasing
-      `best ${query} amazon store purchase`
-    ];
+    const domain = includeDomains[0];
+    
+    let searchStrategies;
+    
+    if (domain === 'bestbuy.com') {
+      // Simplified BestBuy search strategies that work with Exa API
+      searchStrategies = [
+        `${query} bestbuy`,
+        `${query} site:bestbuy.com`,
+        `buy ${query} bestbuy`,
+        `${query} bestbuy product`
+      ];
+    } else {
+      // Amazon search strategies
+      searchStrategies = [
+        `${query} ${domain} buy product price review`,
+        `${query} ${domain} product deals shopping`,
+        `best ${query} ${domain} store purchase`
+      ];
+    }
 
     for (let i = 0; i < searchStrategies.length && allProducts.length < maxResults; i++) {
       try {
         console.log(`🔄 Trying search strategy ${i + 1}: "${searchStrategies[i]}"`);
         
-        const response = await axios.post(this.baseUrl, {
+        // Simplified request configuration for better compatibility
+        const requestConfig = {
           query: searchStrategies[i],
-          numResults: Math.min(maxResults * 2, 30),
-          includeDomains: ['amazon.com'],
+          numResults: Math.min(15, maxResults * 2),
+          includeDomains,
           useAutoprompt: false,
           contents: {
-            text: true,
-            highlights: false
-          },
-          category: 'company',
-          startPublishedDate: '2020-01-01'
-        }, {
+            text: true
+          }
+        };
+        
+        // Add optional fields only if they work
+        if (domain !== 'bestbuy.com') {
+          requestConfig.category = 'company';
+          requestConfig.startPublishedDate = '2020-01-01';
+        }
+        
+        const response = await axios.post(this.baseUrl, requestConfig, {
           headers: {
             'X-API-Key': this.apiKey,
             'Content-Type': 'application/json'
@@ -68,33 +108,30 @@ class ExaSearch {
         });
 
         const results = response.data.results || [];
-        const products = this.parseExaResults(results, query);
+        console.log(`📊 Strategy ${i + 1} returned ${results.length} raw results`);
         
-        // Add unique products (avoid duplicates)
+        const products = this.parseExaResults(results, query, domain);
         for (const product of products) {
           if (!allProducts.find(p => p.id === product.id) && allProducts.length < maxResults) {
             allProducts.push(product);
           }
         }
-        
         console.log(`📊 Strategy ${i + 1} yielded ${products.length} products, total: ${allProducts.length}`);
         
-        // If we have enough products, stop searching
-        if (allProducts.length >= Math.min(maxResults, 5)) {
+        // For BestBuy, be more persistent since it's harder to find products
+        const targetCount = domain === 'bestbuy.com' ? Math.min(maxResults, 3) : Math.min(maxResults, 5);
+        if (allProducts.length >= targetCount) {
           break;
         }
         
-        // Add delay between requests to avoid rate limiting
         if (i < searchStrategies.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
-        
       } catch (strategyError) {
-        console.error(`❌ Search strategy ${i + 1} failed:`, strategyError.message);
-        continue; // Try next strategy
+        console.error(`❌ Search strategy ${i + 1} failed:`, strategyError.response?.data || strategyError.message);
+        continue;
       }
     }
-
     return allProducts;
   }
 
@@ -119,61 +156,109 @@ class ExaSearch {
     return combined.slice(0, maxResults);
   }
 
-  parseExaResults(results, query) {
+  parseExaResults(results, query, domain = 'amazon.com') {
     const validProducts = [];
-    const seenASINs = new Set(); // Track unique ASINs to avoid duplicates
-    
+    const seenIds = new Set();
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
-      
-      // Only process Amazon URLs
-      if (!result.url || !result.url.includes('amazon.com')) {
-        continue;
-      }
-      
-      // Validate that it's a proper Amazon product page
-      const isValidAmazonUrl = result.url.match(/amazon\.com\/(.*\/)?dp\/[A-Z0-9]{10}/) || 
-                              result.url.match(/amazon\.com\/.*\/product\/[A-Z0-9]{10}/) ||
-                              result.url.match(/amazon\.com\/gp\/product\/[A-Z0-9]{10}/);
-      
-      if (!isValidAmazonUrl) {
-        console.log(`⚠️ Skipping invalid Amazon URL: ${result.url}`);
-        continue;
-      }
-      
-      // Extract ASIN (Amazon product ID) from URL
-      const asinMatch = result.url.match(/\/dp\/([A-Z0-9]{10})/) || 
-                       result.url.match(/\/product\/([A-Z0-9]{10})/) ||
-                       result.url.match(/\/gp\/product\/([A-Z0-9]{10})/);
-      const asin = asinMatch ? asinMatch[1] : null;
-      
-      if (!asin) {
-        console.log(`⚠️ Could not extract ASIN from URL: ${result.url}`);
-        continue;
-      }
-
-      // Skip duplicate ASINs
-      if (seenASINs.has(asin)) {
-        console.log(`⚠️ Skipping duplicate ASIN: ${asin}`);
-        continue;
-      }
-      seenASINs.add(asin);
-
-      // Use ASIN-based product generation for consistency
-      const productData = this.generateProductFromASIN(asin, result, query, validProducts.length);
-      
-      if (productData && this.isRelevantProduct(productData, query)) {
-        validProducts.push(productData);
-        console.log(`✅ Added product: ${productData.title.substring(0, 50)}...`);
+      if (!result.url || !result.url.includes(domain)) continue;
+      if (domain === 'amazon.com') {
+        // Amazon logic as before
+        const isValidAmazonUrl = result.url.match(/amazon\.com\/(.*\/)?dp\/[A-Z0-9]{10}/) || 
+                                result.url.match(/amazon\.com\/.*\/product\/[A-Z0-9]{10}/) ||
+                                result.url.match(/amazon\.com\/gp\/product\/[A-Z0-9]{10}/);
+        if (!isValidAmazonUrl) continue;
+        const asinMatch = result.url.match(/\/dp\/([A-Z0-9]{10})/) || 
+                         result.url.match(/\/product\/([A-Z0-9]{10})/) ||
+                         result.url.match(/\/gp\/product\/([A-Z0-9]{10})/);
+        const asin = asinMatch ? asinMatch[1] : null;
+        if (!asin) continue;
+        if (seenIds.has(asin)) continue;
+        seenIds.add(asin);
+        const productData = this.generateProductFromASIN(asin, result, query, validProducts.length);
+        if (productData && this.isRelevantProduct(productData, query)) {
+          validProducts.push({ ...productData, source: 'amazon' });
+        }
+      } else if (domain === 'bestbuy.com') {
+        // Enhanced BestBuy logic: accept multiple URL patterns
+        const bestbuyPatterns = [
+          /bestbuy\.com\/site\/.+\/(\d+)\.p/,               // Product pages
+          /bestbuy\.com\/.*\/(\d+)\.p/,                     // Any product page
+          /bestbuy\.com\/.*product.*\/(\d+)/,               // Product URLs
+          /bestbuy\.com\/.*skuId[=:](\d+)/,                 // SKU links
+          /bestbuy\.com.*\/(\d{7,})/                        // Any long number (likely product ID)
+        ];
+        
+        let productId = null;
+        for (const pattern of bestbuyPatterns) {
+          const match = result.url.match(pattern);
+          if (match && match[1] && match[1].length >= 6) { // Ensure reasonable ID length
+            productId = match[1];
+            break;
+          }
+        }
+        
+        // If no specific ID found, generate one from URL
+        if (!productId && result.url.includes('bestbuy.com')) {
+          // Extract any number from the URL as potential product ID
+          const numberMatch = result.url.match(/(\d{6,})/);
+          if (numberMatch) {
+            productId = numberMatch[1];
+          } else {
+            // Generate consistent ID from URL
+            productId = this.hashStringToIndex(result.url, 9999999).toString();
+          }
+        }
+        
+        if (!productId) continue;
+        if (seenIds.has(productId)) continue;
+        
+        // More flexible keyword matching - at least 50% of keywords should match
+        const keywords = query.toLowerCase().split(/\s+/).filter(k => k.length > 2);
+        const title = (result.title || '').toLowerCase();
+        const content = `${title} ${(result.text || '').toLowerCase()}`;
+        
+        if (keywords.length > 0) {
+          let matchCount = 0;
+          for (const keyword of keywords) {
+            if (content.includes(keyword) || 
+                content.includes(keyword.substring(0, keyword.length - 1)) || // partial match
+                this.findSimilarWord(content, keyword)) {
+              matchCount++;
+            }
+          }
+          
+          const relevanceScore = matchCount / keywords.length;
+          if (relevanceScore < 0.4) continue; // At least 40% relevance (more lenient)
+        }
+        
+        seenIds.add(productId);
+        
+        // Enhanced price extraction
+        const priceData = this.extractBestBuyPrice(result.title, result.text);
+        
+        // Generate better BestBuy product image
+        const productImage = this.generateBestBuyImage(productId, query);
+        
+        // Extract rating from content if available
+        const ratingData = this.extractBestBuyRating(result.text);
+        
+        const product = {
+          id: `bestbuy_${productId}`,
+          title: this.cleanBestBuyTitle(result.title) || `BestBuy ${query}`,
+          price: priceData.price,
+          originalPrice: priceData.originalPrice,
+          image: productImage,
+          link: result.url,
+          rating: ratingData.rating,
+          reviews: ratingData.reviews,
+          features: this.extractFeatures(result.title, result.text),
+          source: 'bestbuy'
+        };
+        validProducts.push(product);
       }
     }
-    
-    // If no valid products found from ExaSearch, return empty array for fallback handling
-    if (validProducts.length === 0) {
-      console.log('⚠️ No valid Amazon products found in ExaSearch results');
-      return [];
-    }
-    
+    if (validProducts.length === 0) return [];
     return validProducts;
   }
 
@@ -431,6 +516,210 @@ class ExaSearch {
       'https://m.media-amazon.com/images/I/71jG+e7roXL._AC_UY327_FMwebp_QL65_.jpg'
     ];
     return genericImages[hash % genericImages.length];
+  }
+
+  findSimilarWord(content, keyword) {
+    // Simple similarity check for partial word matches
+    const words = content.split(/\s+/);
+    for (const word of words) {
+      if (word.length >= 3 && keyword.length >= 3) {
+        // Check if words share at least 70% of characters
+        const similarity = this.calculateStringSimilarity(word, keyword);
+        if (similarity >= 0.7) return true;
+      }
+    }
+    return false;
+  }
+
+  calculateStringSimilarity(str1, str2) {
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length > str2.length ? str2 : str1;
+    if (longer.length === 0) return 1.0;
+    
+    const matches = shorter.split('').filter(char => longer.includes(char)).length;
+    return matches / longer.length;
+  }
+
+  extractBestBuyPrice(title, text = '') {
+    const content = `${title} ${text}`;
+    
+    // Enhanced price extraction patterns for BestBuy
+    const pricePatterns = [
+      /\$(\d+(?:,\d{3})*(?:\.\d{2})?)/g,                    // Standard $99.99
+      /(\d+(?:,\d{3})*(?:\.\d{2})?)\s*dollars?/gi,          // 99 dollars
+      /price:?\s*\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/gi,        // Price: $99.99
+      /current\s+price\s*\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/gi, // Current price $99.99
+      /sale\s+price\s*\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/gi,   // Sale price $99.99
+      /was\s+\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/gi,            // Was $199.99 (original price)
+      /now\s+\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/gi             // Now $99.99
+    ];
+    
+    let prices = [];
+    let originalPrice = null;
+    
+    for (const pattern of pricePatterns) {
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        const priceValue = parseFloat(match[1].replace(/,/g, ''));
+        if (priceValue > 1 && priceValue < 10000) { // Reasonable price range
+          prices.push(priceValue);
+        }
+      }
+    }
+    
+    // Look for "was" pricing to identify original price
+    const wasMatch = content.match(/was\s+\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/i);
+    if (wasMatch) {
+      const wasPrice = parseFloat(wasMatch[1].replace(/,/g, ''));
+      if (wasPrice > 1) {
+        originalPrice = `$${wasPrice.toFixed(2)}`;
+      }
+    }
+    
+    // Use the most common price or first valid price
+    let finalPrice = '$299.99'; // default
+    if (prices.length > 0) {
+      // Sort prices and use median or most frequent
+      prices.sort((a, b) => a - b);
+      const medianPrice = prices[Math.floor(prices.length / 2)];
+      finalPrice = `$${medianPrice.toFixed(2)}`;
+    } else {
+      // Generate price based on product category
+      finalPrice = this.generateBestBuyPrice(title);
+    }
+    
+    return { price: finalPrice, originalPrice };
+  }
+
+  generateBestBuyPrice(title) {
+    const titleLower = title.toLowerCase();
+    
+    if (titleLower.includes('laptop') || titleLower.includes('gaming')) {
+      return '$799.99';
+    } else if (titleLower.includes('headphone') || titleLower.includes('earphone')) {
+      return '$179.99';
+    } else if (titleLower.includes('phone') || titleLower.includes('iphone')) {
+      return '$699.99';
+    } else if (titleLower.includes('tv') || titleLower.includes('monitor')) {
+      return '$449.99';
+    }
+    
+    return '$299.99';
+  }
+
+  generateBestBuyImage(productId, query) {
+    // Generate realistic BestBuy product images
+    const queryLower = query.toLowerCase();
+    const hash = this.hashStringToIndex(productId, 1000);
+    
+    // Category-specific images that look like BestBuy products
+    if (queryLower.includes('laptop') || queryLower.includes('gaming laptop')) {
+      const laptopImages = [
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6481/6481713_sd.jpg',
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6479/6479082_sd.jpg',
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6418/6418599_sd.jpg',
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6515/6515716_sd.jpg'
+      ];
+      return laptopImages[hash % laptopImages.length];
+    }
+    
+    if (queryLower.includes('headphone') || queryLower.includes('earphone') || queryLower.includes('earbuds')) {
+      const audioImages = [
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6505/6505727_sd.jpg',
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6418/6418599_sd.jpg',
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6447/6447099_sd.jpg'
+      ];
+      return audioImages[hash % audioImages.length];
+    }
+    
+    if (queryLower.includes('phone') || queryLower.includes('iphone')) {
+      const phoneImages = [
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6505/6505727_sd.jpg',
+        'https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6514/6514495_sd.jpg'
+      ];
+      return phoneImages[hash % phoneImages.length];
+    }
+    
+    // Default BestBuy placeholder
+    return `https://pisces.bbystatic.com/image2/BestBuy_US/images/products/${productId.slice(0,4)}/${productId}_sd.jpg`;
+  }
+
+  extractBestBuyRating(text = '') {
+    // Extract rating information from BestBuy content
+    const ratingPatterns = [
+      /(\d+\.?\d*)\s*(?:out of|\/)\s*5\s*star/i,
+      /rating:?\s*(\d+\.?\d*)/i,
+      /(\d+\.?\d*)\s*star/i,
+      /rated\s+(\d+\.?\d*)/i
+    ];
+    
+    let rating = null;
+    let reviews = null;
+    
+    for (const pattern of ratingPatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        const ratingValue = parseFloat(match[1]);
+        if (ratingValue >= 1 && ratingValue <= 5) {
+          rating = ratingValue;
+          break;
+        }
+      }
+    }
+    
+    // Extract review count
+    const reviewPatterns = [
+      /(\d+(?:,\d{3})*)\s*review/i,
+      /(\d+(?:,\d{3})*)\s*rating/i,
+      /(\d+(?:,\d{3})*)\s*customer/i
+    ];
+    
+    for (const pattern of reviewPatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        const reviewCount = parseInt(match[1].replace(/,/g, ''));
+        if (reviewCount > 0 && reviewCount < 100000) {
+          reviews = reviewCount;
+          break;
+        }
+      }
+    }
+    
+    // Generate defaults if not found
+    if (!rating) {
+      const hash = this.hashStringToIndex(text, 1000);
+      rating = 4.0 + ((hash % 8) / 10); // 4.0 to 4.7
+    }
+    
+    if (!reviews) {
+      const hash = this.hashStringToIndex(text + 'reviews', 1000);
+      reviews = 50 + (hash % 950); // 50 to 1000 reviews
+    }
+    
+    return { rating: Math.round(rating * 10) / 10, reviews };
+  }
+
+  cleanBestBuyTitle(title) {
+    if (!title || title.trim().length === 0) return null;
+    
+    // Clean up BestBuy title formatting
+    let cleaned = title
+      .replace(/Best Buy/gi, '')
+      .replace(/- Best Buy/gi, '')
+      .replace(/\|\s*Best Buy/gi, '')
+      .replace(/BestBuy\.com/gi, '')
+      .replace(/bestbuy\.com/gi, '')
+      .replace(/\s*-\s*$/, '')
+      .replace(/^\s*-\s*/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    // If title is too short or empty after cleaning, return null
+    if (!cleaned || cleaned.length < 10) {
+      return null;
+    }
+    
+    return cleaned;
   }
 
   extractPriceFromContent(title, text = '') {

@@ -1,23 +1,24 @@
 const axios = require('axios');
 const AmazonScraper = require('./amazonScraper');
+const BestBuyScraper = require('./bestbuyScraper');
 const ExaSearch = require('./exaSearch');
 
 class SmartProductSearch {
   constructor() {
     this.amazonScraper = new AmazonScraper();
+    this.bestBuyScraper = new BestBuyScraper();
     this.exaSearch = new ExaSearch();
-    
     // Multiple API sources for real product data
-    this.apiSources = {
-      rapidapi: process.env.RAPIDAPI_KEY,
-      serpapi: process.env.SERPAPI_KEY,
-      scrapfly: process.env.SCRAPFLY_KEY
-    };
+    // this.apiSources = {
+    //   rapidapi: process.env.RAPIDAPI_KEY,
+    //   serpapi: process.env.SERPAPI_KEY,
+    //   scrapfly: process.env.SCRAPFLY_KEY
+    // };
   }
 
   async searchProducts(specs, maxResults = 10) {
     console.log('🎯 Starting comprehensive product search for:', specs.searchKeywords);
-    
+
     // Tier 1: Direct Amazon Scraping with Playwright
     const amazonProducts = await this.tryAmazonScraping(specs, maxResults);
     if (amazonProducts.length >= 5) {
@@ -25,36 +26,51 @@ class SmartProductSearch {
       return this.sortAndFilterProducts(amazonProducts, specs);
     }
 
-    // Tier 2: Amazon via SerpAPI (real-time Amazon results)
-    const serpProducts = await this.trySerpAPI(specs, maxResults);
-    if (serpProducts.length >= 5) {
-      console.log(`✅ Tier 2 Success: SerpAPI returned ${serpProducts.length} products`);
-      return this.sortAndFilterProducts(serpProducts, specs);
+    // Tier 2: BestBuy via ExaSearch (use ExaSearch as primary for BestBuy)
+    const bestBuyExaProducts = await this.tryBestBuyExaSearch(specs, maxResults);
+    if (bestBuyExaProducts.length >= 3) {
+      console.log(`✅ Tier 2 Success: ExaSearch (BestBuy) returned ${bestBuyExaProducts.length} products`);
+      return this.sortAndFilterProducts(bestBuyExaProducts, specs);
     }
 
-    // Tier 3: RapidAPI Amazon Product API
-    const rapidProducts = await this.tryRapidAPI(specs, maxResults);
-    if (rapidProducts.length >= 5) {
-      console.log(`✅ Tier 3 Success: RapidAPI returned ${rapidProducts.length} products`);
-      return this.sortAndFilterProducts(rapidProducts, specs);
+    // Tier 3: Direct BestBuy Scraping with Playwright (fallback)
+    const bestBuyProducts = await this.tryBestBuyScraping(specs, maxResults);
+    if (bestBuyProducts.length >= 5) {
+      console.log(`✅ Tier 3 Success: BestBuy scraping returned ${bestBuyProducts.length} products`);
+      return this.sortAndFilterProducts(bestBuyProducts, specs);
     }
 
-    // Tier 4: ExaSearch with enhanced parsing
+    // Tier 4: Amazon via SerpAPI (real-time Amazon results)
+    // const serpProducts = await this.trySerpAPI(specs, maxResults);
+    // if (serpProducts.length >= 5) {
+    //   console.log(`✅ Tier 4 Success: SerpAPI returned ${serpProducts.length} products`);
+    //   return this.sortAndFilterProducts(serpProducts, specs);
+    // }
+
+    // Tier 5: RapidAPI Amazon Product API
+    // const rapidProducts = await this.tryRapidAPI(specs, maxResults);
+    // if (rapidProducts.length >= 5) {
+    //   console.log(`✅ Tier 5 Success: RapidAPI returned ${rapidProducts.length} products`);
+    //   return this.sortAndFilterProducts(rapidProducts, specs);
+    // }
+
+    // Tier 6: ExaSearch with enhanced parsing (Amazon)
     const exaProducts = await this.tryExaSearch(specs, maxResults);
     if (exaProducts.length >= 3) {
-      console.log(`✅ Tier 4 Success: ExaSearch returned ${exaProducts.length} products`);
+      console.log(`✅ Tier 6 Success: ExaSearch (Amazon) returned ${exaProducts.length} products`);
       return this.sortAndFilterProducts(exaProducts, specs);
     }
 
-    // Tier 5: ScrapFly Amazon Scraping
-    const scrapflyProducts = await this.tryScrapFly(specs, maxResults);
-    if (scrapflyProducts.length >= 3) {
-      console.log(`✅ Tier 5 Success: ScrapFly returned ${scrapflyProducts.length} products`);
-      return this.sortAndFilterProducts(scrapflyProducts, specs);
-    }
+    // Tier 7: ScrapFly Amazon Scraping
+    // const scrapflyProducts = await this.tryScrapFly(specs, maxResults);
+    // if (scrapflyProducts.length >= 3) {
+    //   console.log(`✅ Tier 7 Success: ScrapFly returned ${scrapflyProducts.length} products`);
+    //   return this.sortAndFilterProducts(scrapflyProducts, specs);
+    // }
 
-    // Tier 6: Combine all available results
-    const allProducts = [...amazonProducts, ...serpProducts, ...rapidProducts, ...exaProducts, ...scrapflyProducts];
+
+    // Tier 8: Combine all available results
+    const allProducts = [...amazonProducts, ...bestBuyProducts, ...bestBuyExaProducts, ...exaProducts];
     if (allProducts.length > 0) {
       console.log(`✅ Combined Success: Found ${allProducts.length} total products from all sources`);
       return this.sortAndFilterProducts(this.removeDuplicates(allProducts), specs);
@@ -65,6 +81,82 @@ class SmartProductSearch {
     const fallbackProducts = this.getIntelligentFallback(specs);
     console.log(`✅ Fallback Success: Generated ${fallbackProducts.length} products`);
     return fallbackProducts;
+  }
+
+  async tryBestBuyExaSearch(specs, maxResults) {
+    try {
+      console.log('🔍 Trying ExaSearch for BestBuy products...');
+      
+      // Enhanced search with multiple query variations
+      const queries = [
+        specs.searchKeywords,
+        `${specs.searchKeywords} price`,
+        `${specs.searchKeywords} buy online`,
+        `best ${specs.searchKeywords}`
+      ];
+      
+      let allProducts = [];
+      
+      for (const query of queries) {
+        if (allProducts.length >= maxResults) break;
+        
+        try {
+          const products = await this.exaSearch.searchProducts(query, maxResults, 'bestbuy');
+          if (Array.isArray(products) && products.length > 0) {
+            // Tag with source: 'bestbuy' if not already tagged and filter duplicates
+            for (const product of products) {
+              const productWithSource = { ...product, source: product.source || 'bestbuy' };
+              if (!allProducts.find(p => p.id === productWithSource.id)) {
+                allProducts.push(productWithSource);
+              }
+            }
+            console.log(`✅ Query "${query}" found ${products.length} BestBuy products`);
+          }
+        } catch (queryError) {
+          console.log(`⚠️ Query "${query}" failed:`, queryError.message);
+          continue;
+        }
+        
+        // Brief delay between queries
+        if (allProducts.length < maxResults) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      console.log(`🎯 Total BestBuy products found: ${allProducts.length}`);
+      return allProducts.slice(0, maxResults);
+      
+    } catch (error) {
+      console.log('❌ ExaSearch (BestBuy) failed:', error.message);
+      console.log('💡 Suggestion: Ensure EXA_API_KEY is set in environment variables');
+      return [];
+    }
+  }
+
+  async tryBestBuyScraping(specs, maxResults) {
+    try {
+      console.log('🕷️ Tier 2: Trying direct BestBuy scraping...');
+      const products = await this.bestBuyScraper.searchProducts(specs.searchKeywords, maxResults);
+      if (products && products.length > 0) {
+        return products;
+      }
+      // If direct scraping fails or returns nothing, try ExaSearch for BestBuy
+      console.log('🔄 Falling back to ExaSearch for BestBuy...');
+      let exaProducts = await this.exaSearch.searchProducts(specs.searchKeywords, maxResults, 'bestbuy');
+      if (Array.isArray(exaProducts)) {
+        exaProducts = exaProducts.map(p => ({ ...p, source: 'bestbuy' }));
+      }
+      return exaProducts || [];
+    } catch (error) {
+      console.log('❌ BestBuy scraping and ExaSearch failed:', error.message);
+      return [];
+    } finally {
+      try {
+        await this.bestBuyScraper.close();
+      } catch (e) {
+        // Ignore close errors
+      }
+    }
   }
 
   async tryAmazonScraping(specs, maxResults) {
@@ -84,89 +176,8 @@ class SmartProductSearch {
     }
   }
 
-  async trySerpAPI(specs, maxResults) {
-    if (!this.apiSources.serpapi) {
-      console.log('⚠️ SerpAPI key not configured');
-      return [];
-    }
 
-    try {
-      console.log('🔍 Tier 2: Trying SerpAPI Amazon search...');
-      
-      const response = await axios.get('https://serpapi.com/search', {
-        params: {
-          engine: 'amazon',
-          amazon_domain: 'amazon.com',
-          q: specs.searchKeywords,
-          api_key: this.apiSources.serpapi,
-          num: Math.min(maxResults, 20)
-        },
-        timeout: 15000
-      });
 
-      const products = (response.data.products || []).map((product, index) => ({
-        id: `serp_${index + 1}_${Date.now()}`,
-        title: product.title || 'Amazon Product',
-        price: product.price || '$0.00',
-        originalPrice: product.original_price || null,
-        image: product.image || 'https://m.media-amazon.com/images/I/placeholder.jpg',
-        link: product.link || 'https://amazon.com',
-        rating: product.rating || 4.0,
-        reviews: product.rating_count || 100,
-        features: this.extractFeatures(product.title || '', product.description || '')
-      }));
-
-      console.log(`📦 SerpAPI found ${products.length} products`);
-      return products;
-
-    } catch (error) {
-      console.log('❌ SerpAPI failed:', error.message);
-      return [];
-    }
-  }
-
-  async tryRapidAPI(specs, maxResults) {
-    if (!this.apiSources.rapidapi) {
-      console.log('⚠️ RapidAPI key not configured');
-      return [];
-    }
-
-    try {
-      console.log('🚀 Tier 3: Trying RapidAPI Amazon search...');
-      
-      const response = await axios.get('https://amazon-product-reviews-keywords.p.rapidapi.com/product/search', {
-        params: {
-          keyword: specs.searchKeywords,
-          country: 'US',
-          category: 'aps'
-        },
-        headers: {
-          'X-RapidAPI-Key': this.apiSources.rapidapi,
-          'X-RapidAPI-Host': 'amazon-product-reviews-keywords.p.rapidapi.com'
-        },
-        timeout: 15000
-      });
-
-      const products = (response.data.products || []).slice(0, maxResults).map((product, index) => ({
-        id: `rapid_${index + 1}_${Date.now()}`,
-        title: product.product_title || 'Amazon Product',
-        price: product.product_price || '$0.00',
-        originalPrice: product.product_original_price || null,
-        image: product.product_photo || 'https://m.media-amazon.com/images/I/placeholder.jpg',
-        link: product.product_url || 'https://amazon.com',
-        rating: parseFloat(product.product_star_rating) || 4.0,
-        reviews: parseInt(product.product_num_ratings) || 100,
-        features: this.extractFeatures(product.product_title || '', product.product_description || '')
-      }));
-
-      console.log(`📦 RapidAPI found ${products.length} products`);
-      return products;
-
-    } catch (error) {
-      console.log('❌ RapidAPI failed:', error.message);
-      return [];
-    }
-  }
 
   async tryExaSearch(specs, maxResults) {
     try {
@@ -179,40 +190,7 @@ class SmartProductSearch {
     }
   }
 
-  async tryScrapFly(specs, maxResults) {
-    if (!this.apiSources.scrapfly) {
-      console.log('⚠️ ScrapFly key not configured');
-      return [];
-    }
-
-    try {
-      console.log('🕸️ Tier 5: Trying ScrapFly Amazon scraping...');
-      
-      const amazonUrl = `https://www.amazon.com/s?k=${encodeURIComponent(specs.searchKeywords)}`;
-      
-      const response = await axios.get('https://api.scrapfly.io/scrape', {
-        params: {
-          key: this.apiSources.scrapfly,
-          url: amazonUrl,
-          format: 'json',
-          country: 'US',
-          render_js: true,
-          cache: false
-        },
-        timeout: 20000
-      });
-
-      // Parse ScrapFly response - this would need custom HTML parsing
-      // For now, return empty array but this can be enhanced
-      console.log('📦 ScrapFly response received, parsing...');
-      return [];
-
-    } catch (error) {
-      console.log('❌ ScrapFly failed:', error.message);
-      return [];
-    }
-  }
-
+ 
   sortAndFilterProducts(products, specs) {
     if (!products || products.length === 0) return [];
 
@@ -349,9 +327,10 @@ class SmartProductSearch {
   async close() {
     try {
       await this.amazonScraper.close();
-    } catch (e) {
-      // Ignore errors
-    }
+    } catch (e) {}
+    try {
+      await this.bestBuyScraper.close();
+    } catch (e) {}
   }
 }
 

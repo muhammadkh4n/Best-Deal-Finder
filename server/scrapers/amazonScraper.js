@@ -10,7 +10,7 @@ class AmazonScraper {
   async initialize() {
     try {
       console.log('🚀 Initializing Amazon Scraper...');
-      
+
       this.browser = await chromium.launch({
         headless: true,
         args: [
@@ -23,15 +23,15 @@ class AmazonScraper {
           '--disable-gpu'
         ]
       });
-      
+
       // Create context with user agent
       const context = await this.browser.newContext({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         viewport: { width: 1366, height: 768 }
       });
-      
+
       this.page = await context.newPage();
-      
+
       // Block unnecessary resources for faster loading
       await this.page.route('**/*', (route) => {
         const resourceType = route.request().resourceType();
@@ -41,10 +41,10 @@ class AmazonScraper {
           route.continue();
         }
       });
-      
+
       this.isInitialized = true;
       console.log('✅ Amazon Scraper initialized successfully');
-      
+
     } catch (error) {
       console.error('❌ Failed to initialize Amazon Scraper:', error.message);
       throw error;
@@ -58,19 +58,19 @@ class AmazonScraper {
 
     try {
       console.log(`🔍 Searching Amazon for: "${searchQuery}"`);
-      
+
       // Navigate to Amazon search
       const searchUrl = `https://www.amazon.com/s?k=${encodeURIComponent(searchQuery)}&ref=sr_pg_1`;
-      
-      await this.page.goto(searchUrl, { 
+
+      await this.page.goto(searchUrl, {
         waitUntil: 'networkidle',
-        timeout: 30000 
+        timeout: 30000
       });
 
       // Wait for search results
       try {
-        await this.page.waitForSelector('[data-component-type="s-search-result"]', { 
-          timeout: 15000 
+        await this.page.waitForSelector('[data-component-type="s-search-result"]', {
+          timeout: 15000
         });
       } catch (error) {
         console.log('⚠️ Standard selector not found, trying alternative...');
@@ -80,25 +80,25 @@ class AmazonScraper {
       // Extract product information
       const products = await this.page.evaluate((maxResults) => {
         const results = [];
-        
+
         // Try multiple selectors for product containers
         const productSelectors = [
           '[data-component-type="s-search-result"]',
           '.s-result-item',
           '[data-cel-widget*="search_result"]'
         ];
-        
+
         let productElements = [];
         for (const selector of productSelectors) {
           productElements = document.querySelectorAll(selector);
           if (productElements.length > 0) break;
         }
-        
+
         console.log(`Found ${productElements.length} product elements`);
 
         for (let i = 0; i < Math.min(productElements.length, maxResults); i++) {
           const element = productElements[i];
-          
+
           try {
             // Extract title
             const titleSelectors = [
@@ -109,7 +109,7 @@ class AmazonScraper {
               'a[href*="/dp/"] h2 span',
               '.a-size-base-plus'
             ];
-            
+
             let title = '';
             for (const selector of titleSelectors) {
               const titleElement = element.querySelector(selector);
@@ -128,7 +128,7 @@ class AmazonScraper {
               '[data-a-color="price"] .a-offscreen',
               '.a-price-symbol'
             ];
-            
+
             let price = '';
             for (const selector of priceSelectors) {
               const priceElement = element.querySelector(selector);
@@ -150,7 +150,7 @@ class AmazonScraper {
               'img[src*="images-amazon.com"]',
               '.a-dynamic-image'
             ];
-            
+
             let image = '';
             for (const selector of imageSelectors) {
               const imageElement = element.querySelector(selector);
@@ -172,7 +172,7 @@ class AmazonScraper {
               'a[href*="/dp/"]',
               '.s-title-instructions-style a'
             ];
-            
+
             let link = '';
             for (const selector of linkSelectors) {
               const linkElement = element.querySelector(selector);
@@ -191,7 +191,7 @@ class AmazonScraper {
               '[aria-label*="out of 5 stars"]',
               '.a-star-rating .a-icon-alt'
             ];
-            
+
             let rating = null;
             for (const selector of ratingSelectors) {
               const ratingElement = element.querySelector(selector);
@@ -211,7 +211,7 @@ class AmazonScraper {
               '.a-size-base.a-color-secondary',
               '.a-size-small .a-link-normal'
             ];
-            
+
             let reviews = null;
             for (const selector of reviewSelectors) {
               const reviewElement = element.querySelector(selector);
@@ -259,7 +259,7 @@ class AmazonScraper {
 
     } catch (error) {
       console.error('❌ Amazon scraping error:', error.message);
-      
+
       // For now, always return fallback data until scraping is fully working
       console.log('🔄 Using fallback products (Amazon may be blocking scraping)');
       return this.getFallbackProducts(searchQuery);
@@ -268,7 +268,7 @@ class AmazonScraper {
 
   extractFeatures(title) {
     const features = [];
-    
+
     // Enhanced feature extraction patterns
     const patterns = {
       processor: /Intel\s+(Core\s+)?i[3579]|AMD\s+Ryzen\s+[3579]|Apple\s+M[12]|Snapdragon\s+\d+/i,
@@ -302,9 +302,9 @@ class AmazonScraper {
   getFallbackProducts(query) {
     // Return realistic fallback data based on the query
     console.log('🔄 Using enhanced fallback products for:', query);
-    
+
     const queryLower = query.toLowerCase();
-    
+
     if (queryLower.includes('laptop') || queryLower.includes('gaming')) {
       return [
         {
@@ -331,7 +331,7 @@ class AmazonScraper {
         }
       ];
     }
-    
+
     if (queryLower.includes('iphone') || queryLower.includes('phone')) {
       return [
         {
@@ -358,7 +358,7 @@ class AmazonScraper {
         }
       ];
     }
-    
+
     if (queryLower.includes('headphone') || queryLower.includes('audio')) {
       return [
         {
@@ -374,7 +374,7 @@ class AmazonScraper {
         }
       ];
     }
-    
+
     // Generic fallback
     return [
       {

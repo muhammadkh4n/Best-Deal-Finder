@@ -18,7 +18,7 @@ function App() {
             </div>
           </div>
           <p className="text-gray-600 max-w-lg mx-auto leading-relaxed text-sm">
-            Discover amazing deals on Amazon with the power of AI. Just describe what you're looking for!
+            Discover amazing deals on Amazon & Best Buy with the power of AI. Just describe what you're looking for!
           </p>
         </header>
         

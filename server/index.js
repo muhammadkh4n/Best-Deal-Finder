@@ -52,7 +52,7 @@ const conversations = new Map();
 // Main chat endpoint
 app.post('/chat', async (req, res) => {
   try {
-    const { message, conversationId = generateConversationId(), selectedProduct } = req.body;
+    const { message, conversationId = generateConversationId(), selectedProduct, shop = 'amazon' } = req.body;
     
     console.log('💬 Received message:', message);
     console.log('🆔 Conversation ID:', conversationId);
@@ -87,7 +87,7 @@ app.post('/chat', async (req, res) => {
     // Process the message
     console.log('⚙️ Processing user message...');
     // Pass selectedProduct explicitly to processUserMessage
-    const response = await processUserMessage(message.trim(), conversation, selectedProduct);
+    const response = await processUserMessage(message.trim(), conversation, selectedProduct, shop);
     
     // Add assistant response to conversation
     const assistantMessage = {
@@ -132,7 +132,7 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-async function processUserMessage(message, conversation, selectedProduct = null) {
+async function processUserMessage(message, conversation, selectedProduct = null, shop = 'amazon') {
   try {
     const productSpecs = await parseWithGemini(message, conversation);
 
@@ -141,9 +141,9 @@ async function processUserMessage(message, conversation, selectedProduct = null)
       return await handleFollowUpQuestion(message, conversation, selectedProduct);
     }
 
-    // Step 2: If it's a product search, scrape Amazon
+    // Step 2: If it's a product search, use the selected shop
     if (productSpecs.isProductSearch) {
-      const products = await searchAmazonProducts(productSpecs);
+      const products = await searchAmazonProducts(productSpecs, shop);
       conversation.products = products;
       return formatProductResponse(products, productSpecs);
     } else {
@@ -275,13 +275,59 @@ async function parseWithGemini(message, conversation) {
   }
 }
 
-async function searchAmazonProducts(specs) {
-  console.log('🛒 Starting comprehensive product search for:', specs.searchKeywords);
-  
+async function searchAmazonProducts(specs, shop = 'amazon') {
+  console.log('🛒 Starting comprehensive product search for:', specs.searchKeywords, 'Shop:', shop);
   const smartSearch = new SmartProductSearch();
-  
   try {
-    const products = await smartSearch.searchProducts(specs, 10);
+    let products = [];
+    if (shop === 'amazon') {
+      products = await smartSearch.tryAmazonScraping(specs, 10);
+    } else if (shop === 'bestbuy') {
+      console.log('🎯 Starting BestBuy search process...');
+      
+      // Primary: Try ExaSearch for BestBuy first (most reliable)
+      products = await smartSearch.tryBestBuyExaSearch(specs, 10);
+      console.log(`🔍 ExaSearch returned ${products.length} BestBuy products`);
+      
+      // Secondary: Try direct scraping if not enough products
+      if (products.length < 3) {
+        console.log('🕷️ Trying direct BestBuy scraping as backup...');
+        const scrapedProducts = await smartSearch.tryBestBuyScraping(specs, 10);
+        const validScraped = scrapedProducts.filter(p => p.source === 'bestbuy');
+        products = products.concat(validScraped);
+        console.log(`🕷️ Scraping added ${validScraped.length} more products`);
+      }
+      
+      // Filter to keep only real BestBuy products
+      products = products.filter(p => p.source === 'bestbuy');
+      
+      // If still no products, provide helpful feedback
+      if (products.length === 0) {
+        console.log('⚠️ No BestBuy products found. Possible reasons:');
+        console.log('  • Product not available at BestBuy');
+        console.log('  • Search terms too specific or too generic');
+        console.log('  • ExaSearch API limitations');
+        
+        // Return a helpful message instead of empty array
+        return [{
+          id: 'bestbuy_no_results',
+          title: `No BestBuy products found for "${specs.searchKeywords}"`,
+          price: 'N/A',
+          originalPrice: null,
+          image: 'https://www.bestbuy.com/~assets/bby/_images/global/header/bestbuy-logo.svg',
+          link: `https://www.bestbuy.com/site/searchpage.jsp?st=${encodeURIComponent(specs.searchKeywords)}`,
+          rating: null,
+          reviews: null,
+          features: ['Try different search terms', 'Check BestBuy website directly', 'Consider similar products'],
+          source: 'bestbuy_message'
+        }];
+      }
+      
+      console.log(`✅ BestBuy search completed: ${products.length} products found`);
+    } else {
+      // fallback: use all sources
+      products = await smartSearch.searchProducts(specs, 10);
+    }
     console.log(`✅ Smart search completed: ${products.length} products found`);
     return products;
   } catch (error) {
