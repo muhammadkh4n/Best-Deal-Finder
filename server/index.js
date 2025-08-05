@@ -1,3 +1,5 @@
+// ...existing code...
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -132,6 +134,49 @@ app.post('/chat', async (req, res) => {
   }
 });
 
+// Place this after app is initialized
+// Multi-shop search endpoint: returns products from both Amazon and Best Buy in parallel
+app.post('/search-multi', async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      return res.status(400).json({ error: 'Message is required and must be a non-empty string' });
+    }
+
+    // Parse the message to extract product specs (reuse parseWithGemini)
+    const conversation = { messages: [{ role: 'user', content: message.trim(), timestamp: new Date() }] };
+    const productSpecs = await parseWithGemini(message.trim(), conversation);
+
+    if (!productSpecs.isProductSearch) {
+      return res.status(200).json({
+        products: [],
+        message: 'No product search detected in the query.'
+      });
+    }
+
+    // Fetch from both Amazon and Best Buy in parallel
+    const [amazonProducts, bestBuyProducts] = await Promise.all([
+      searchAmazonProducts(productSpecs, 'amazon'),
+      searchAmazonProducts(productSpecs, 'bestbuy')
+    ]);
+
+    // Add a 'source' field if missing
+    const addSource = (products, source) =>
+      (products || []).map(p => ({ ...p, source: p.source || source }));
+    const allProducts = [
+      ...addSource(amazonProducts, 'amazon'),
+      ...addSource(bestBuyProducts, 'bestbuy')
+    ];
+
+    res.json({
+      products: allProducts,
+      message: 'Combined results from Amazon and Best Buy.'
+    });
+  } catch (error) {
+    console.error('❌ /search-multi error:', error);
+    res.status(500).json({ error: 'Internal server error', message: error.message });
+  }
+});
 async function processUserMessage(message, conversation, selectedProduct = null, shop = 'amazon') {
   try {
     const productSpecs = await parseWithGemini(message, conversation);

@@ -16,17 +16,17 @@ interface Product {
   title: string;
   price: string;
   originalPrice?: string;
-  //   image: string;
+  image?: string;
   link: string;
   rating?: number;
   reviews?: number;
   features: string[];
+  source?: string;
 }
 
-interface ChatResponse {
-  response: string;
-  conversationId: string;
+interface   MultiShopResponse {
   products: Product[];
+  message: string;
 }
 
 const ChatInterface = () => {
@@ -39,9 +39,6 @@ const ChatInterface = () => {
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedShop, setSelectedShop] = useState<'amazon' | 'bestbuy'>('amazon');
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -76,33 +73,33 @@ const ChatInterface = () => {
     setIsLoading(true);
 
     try {
-      const response = await axios.post<ChatResponse>('http://localhost:5000/chat', {
-        message: inputMessage,
-        conversationId,
-        shop: selectedShop,
-        selectedProduct: selectedProduct ? {
-          id: selectedProduct.id,
-          title: selectedProduct.title,
-          price: selectedProduct.price,
-          originalPrice: selectedProduct.originalPrice,
-          link: selectedProduct.link,
-          rating: selectedProduct.rating,
-          reviews: selectedProduct.reviews,
-          features: selectedProduct.features
-        } : null
-      });
-
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: response.data.response,
-        timestamp: new Date(),
-        products: selectedProduct ? undefined : response.data.products
-      };
-
+      let assistantMessage: Message;
+      if (selectedProduct) {
+        // Follow-up: use /chat endpoint
+        const response = await axios.post('http://localhost:5000/chat', {
+          message: inputMessage,
+          selectedProduct,
+          // Optionally, send conversation context if needed
+        });
+        assistantMessage = {
+          role: 'assistant',
+          content: response.data.response,
+          timestamp: new Date(),
+          // No products for follow-up
+        };
+      } else {
+        // New product search: use /search-multi
+        const response = await axios.post<MultiShopResponse>('http://localhost:5000/search-multi', {
+          message: inputMessage
+        });
+        assistantMessage = {
+          role: 'assistant',
+          content: response.data.message,
+          timestamp: new Date(),
+          products: response.data.products
+        };
+      }
       setMessages(prev => [...prev, assistantMessage]);
-      setConversationId(response.data.conversationId);
-
-
     } catch (error) {
       console.error('Error sending message:', error);
       const errorMessage: Message = {
@@ -111,7 +108,6 @@ const ChatInterface = () => {
         timestamp: new Date()
       };
       setMessages(prev => [...prev, errorMessage]);
-      setProducts([]); // Clear products on error
     } finally {
       setIsLoading(false);
     }
@@ -218,7 +214,7 @@ const ChatInterface = () => {
                             {product.title}
                           </h3>
                           <div className="text-xs text-gray-500 mb-1">
-                            Source: {product.link.includes('bestbuy.com') ? 'BestBuy' : product.link.includes('amazon.com') ? 'Amazon' : 'Other'}
+                            Source: {product.source ? product.source.charAt(0).toUpperCase() + product.source.slice(1) : (product.link.includes('bestbuy.com') ? 'BestBuy' : product.link.includes('amazon.com') ? 'Amazon' : 'Other')}
                           </div>
                           <div className="flex items-baseline gap-2 mb-2">
                             <span className="text-lg font-bold text-gray-900">{product.price}</span>
@@ -233,7 +229,7 @@ const ChatInterface = () => {
                             className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md group-hover:scale-105 mt-1"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {selectedShop === 'bestbuy' ? 'View on BestBuy' : 'View on Amazon'}
+                            {product.source === 'bestbuy' || product.link.includes('bestbuy.com') ? 'View on BestBuy' : 'View on Amazon'}
                           </a>
                         </div>
                       </div>
@@ -245,48 +241,7 @@ const ChatInterface = () => {
           </div>
         ))}
 
-        {/* Show products after all messages */}
-        {products.length > 0 && (
-          <div className="mt-4 animate-slideIn">
-            <div className="grid gap-3 max-w-[85%] lg:max-w-[75%]">
-              {products.map((product) => (
-                <div
-                  key={product.id}
-                  className="group bg-white rounded-xl border border-gray-200/80 hover:border-blue-200 transition-all duration-300 hover:shadow-lg hover:shadow-blue-100/30 p-3 hover:-translate-y-1 cursor-pointer"
-                  onClick={() => setSelectedProduct(product)}
-                  title="Select this product for follow-up questions"
-                >
-                  <div className="flex gap-3">
-                    <div className="relative flex-shrink-0">
-                      {/* <img src={product.image} alt={product.title} ... /> */}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-gray-900 text-sm mb-1 line-clamp-2 leading-5 group-hover:text-blue-700 transition-colors">
-                        {product.title}
-                      </h3>
-                      <div className="flex items-baseline gap-2 mb-2">
-                        <span className="text-lg font-bold text-gray-900">{product.price}</span>
-                        {product.originalPrice && (
-                          <span className="text-xs text-gray-500 line-through">{product.originalPrice}</span>
-                        )}
-                      </div>
-                      {/* Add more product info if desired */}
-                      <a
-                        href={product.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md group-hover:scale-105 mt-1"
-                        onClick={e => e.stopPropagation()}
-                      >
-                        View on Amazon
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Show products after all messages (now handled in assistant message) */}
         {isLoading && (
           <div className="flex justify-start animate-fadeIn">
             <div className="flex items-start gap-3">
@@ -317,18 +272,7 @@ const ChatInterface = () => {
       {/* Input Area */}
       <div className="border-t border-gray-200/50 bg-white p-4 flex-shrink-0">
         <div className="flex gap-3 items-end">
-          {/* Shop Dropdown */}
-          <div className="mr-2 mb-3">
-            <select
-              value={selectedShop}
-              onChange={e => setSelectedShop(e.target.value as 'amazon' | 'bestbuy')}
-              className="border text-black border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-              disabled={isLoading}
-            >
-              <option value="amazon">Amazon</option>
-              <option value="bestbuy">BestBuy</option>
-            </select>
-          </div>
+         
           <div className="flex-1 relative">
             <textarea
               ref={textareaRef}
